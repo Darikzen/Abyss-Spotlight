@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deep</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Khmer+Looped:wght@300;400&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: #08090d;
+            cursor: none;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        /* SVG filter for metaball effect */
+        .goo-filter {
+            position: absolute;
+            width: 0;
+            height: 0;
+        }
+        
+        @keyframes colorWave {
+            0% { opacity: 1; }
+            50% { opacity: 0.92; }
+            100% { opacity: 1; }
+        }
+        
+        #textLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            font-family: 'Space Mono', monospace;
+            font-weight: 400;
+            font-size: 13px;
+            line-height: 1.4;
+            pointer-events: none;
+            z-index: 5;
+            --mouse-x: 50%;
+            --mouse-y: 50%;
+            -webkit-mask-image: radial-gradient(ellipse 190px 180px at var(--mouse-x) var(--mouse-y), black 0%, black 65%, transparent 100%);
+            mask-image: radial-gradient(ellipse 190px 180px at var(--mouse-x) var(--mouse-y), black 0%, black 65%, transparent 100%);
+            animation: colorWave 15s ease-in-out infinite;
+            letter-spacing: 0px;
+        }
+        
+        .text-line {
+            display: block;
+            margin-bottom: 0;
+            text-align: justify;
+            text-align-last: justify;
+            -moz-text-align-last: justify;
+            transform-origin: center;
+        }
+        
+        .text-line::after {
+            content: "";
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .word-wrap {
+            display: inline-block;
+            transition: transform 0.15s ease-out;
+            transform-origin: center;
+        }
+        
+        .glitch {
+            color: #1a1a1a;
+            font-weight: 400;
+        }
+        
+        .word-italic { font-style: italic; }
+        .word-bold { font-weight: 700; }
+        .word-smallcaps { font-variant: small-caps; font-size: 0.95em; }
+        .word-spaced { letter-spacing: 2px; }
+        .word-khmer { font-family: 'Noto Sans Khmer Looped', sans-serif; font-weight: 300; }
+        
+        .word-link {
+            pointer-events: auto;
+            cursor: pointer;
+            text-decoration: none;
+            transition: opacity 0.4s ease, text-shadow 0.4s ease;
+        }
+        
+        .word-link:hover {
+            opacity: 1;
+            text-shadow: 0 0 8px currentColor;
+        }
+        
+        #cursor {
+            position: fixed;
+            width: 22px;
+            height: 22px;
+            border: 1px solid rgba(150, 150, 150, 0.3);
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            transition: width 0.3s ease, height 0.3s ease;
+            z-index: 1000;
+        }
+        
+        #cursor.active {
+            width: 40px;
+            height: 40px;
+        }
+        
+        /* Layer ordering */
+        #vignetteLayer { z-index: 1; }
+        #edgeLayer { z-index: 2; }
+        #textLayer { z-index: 5; }
+        #layer1 { z-index: 10; }
+        #layer2 { z-index: 11; }
+        #layer3 { z-index: 12; }
+        #layer4 { z-index: 13; }
+    </style>
+</head>
+<body>
+    <!-- SVG Filters for metaball effect -->
+    <svg class="goo-filter">
+        <defs>
+            <filter id="goo">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>
+                <feColorMatrix in="blur" mode="matrix" 
+                    values="1 0 0 0 0  
+                            0 1 0 0 0  
+                            0 0 1 0 0  
+                            0 0 0 22 -10" result="goo"/>
+                <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+            </filter>
+            
+            <filter id="goo-edge">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+                <feColorMatrix in="blur" mode="matrix" 
+                    values="1 0 0 0 0  
+                            0 1 0 0 0  
+                            0 0 1 0 0  
+                            0 0 0 18 -8" result="goo"/>
+                <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+            </filter>
+        </defs>
+    </svg>
+
+    <div id="cursor"></div>
+    <canvas id="vignetteLayer"></canvas>
+    <canvas id="edgeLayer" style="filter: url(#goo-edge);"></canvas>
+    <div id="textLayer"></div>
+    <canvas id="layer1" style="filter: url(#goo);"></canvas>
+    <canvas id="layer2" style="filter: url(#goo);"></canvas>
+    <canvas id="layer3" style="filter: url(#goo);"></canvas>
+    <canvas id="layer4" style="filter: url(#goo);"></canvas>
+
+    <script>
+        const cursorEl = document.getElementById('cursor');
+        let mouseX = window.innerWidth / 2;
+        let mouseY = window.innerHeight / 2;
+        let prevMouseX = mouseX;
+        let prevMouseY = mouseY;
+        let cursorActive = false;
+        
+        let cursorVelocity = 0;
+        let smoothedVelocity = 0;
+        let movementAngle = 0;
+        
+        let waveOrigin = 0;
+        let waveProgress = 0;
+        let waveActive = false;
+        let waveIntensity = 0;
+        
+        let spotlightX = mouseX;
+        let spotlightY = mouseY;
+        const spotlightDragFactor = 0.05;
+        const spotlightRadiusX = 190;
+        const spotlightRadiusY = 180;
+        
+        let globalTime = 0;
+
+        document.addEventListener('mousemove', (e) => {
+            prevMouseX = mouseX;
+            prevMouseY = mouseY;
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            cursorEl.style.left = mouseX + 'px';
+            cursorEl.style.top = mouseY + 'px';
+            
+            const dx = mouseX - prevMouseX;
+            const dy = mouseY - prevMouseY;
+            cursorVelocity = Math.sqrt(dx * dx + dy * dy);
+            
+            if (cursorVelocity > 0.5) {
+                movementAngle = Math.atan2(dy, dx);
+                
+                if (cursorVelocity > 10 && !waveActive) {
+                    waveActive = true;
+                    waveProgress = 0;
+                    waveOrigin = movementAngle;
+                    waveIntensity = Math.min(cursorVelocity / 25, 1);
+                }
+            }
+        });
+
+        document.addEventListener('mousedown', () => {
+            cursorActive = true;
+            cursorEl.classList.add('active');
+        });
+
+        document.addEventListener('mouseup', () => {
+            cursorActive = false;
+            cursorEl.classList.remove('active');
+        });
+
+        // Word lists - chill explorative theme
+        const fragments = [
+            'beneath', 'wonder', 'breathe', 'drift', 'glow', 'deep', 'flow', 'soft',
+            'dream', 'pulse', 'warm', 'expand', 'gentle', 'unfold', 'presence',
+            'bloom', 'tender', 'vast', 'quiet', 'ripple', 'mycelium', 'spore',
+            'float', 'embrace', 'luminous', 'dissolve', 'merge', 'emerge', 'become',
+            'organic', 'roots', 'canopy', 'dewdrop', 'current', 'wavelength'
+        ];
+
+        const cyrillicWords = [
+            'тепло', 'свет', 'сон', 'волна', 'дыхание', 'покой', 'нежность',
+            'глубина', 'течение', 'мягкость', 'простор', 'тишь', 'рост', 'корни',
+            'сияние', 'туман', 'роса', 'поток', 'лепесток', 'мицелий'
+        ];
+
+        const khmerWords = [
+            'ស្ងប់', 'ភ្លឺ', 'ហូរ', 'ដង្ហើម', 'សុបិន', 'ទន់', 'កក់ក្ដៅ',
+            'ជ្រៅ', 'ស្ងាត់', 'រីក', 'រលក', 'ផ្កា', 'ឫស', 'ពន្លឺ',
+            'សន្តិភាព', 'បេះដូង', 'ព្រះអាទិត្យ', 'ព្រះច័ន្ទ', 'មេឃ', 'ទឹក'
+        ];
+
+        const symbols = ['·', '◦', '○', '∘', '⋅', '…', '∿', '≈', '~', '◠'];
+        
+        // GRAYSCALE colors only
+        function getWordColor() {
+            const min = 0x00;
+            const max = 0xCC;
+            const gray = Math.floor(Math.random() * (max - min + 1)) + min;
+            const hex = gray.toString(16).padStart(2, '0');
+            return `#${hex}${hex}${hex}`;
+        }
+        
+        function getWordFormatting() {
+            const roll = Math.random();
+            
+            if (roll < 0.70) {
+                return { class: '', isLink: false };
+            } else if (roll < 0.82) {
+                return { class: 'word-italic', isLink: false };
+            } else if (roll < 0.90) {
+                return { class: 'word-bold', isLink: false };
+            } else if (roll < 0.96) {
+                return { class: 'word-smallcaps', isLink: false };
+            } else {
+                return { class: 'word-link', isLink: true };
+            }
+        }
+        
+        let wordElements = [];
+        let wordIndex = 0;
+        
+        function generateCrypticText() {
+            let html = '';
+            const lines = Math.floor(window.innerHeight / 17);
+            let currentFontSize = 13;
+            let wordCount = 0;
+            let inSpecialSequence = false;
+            let specialSequenceRemaining = 0;
+            let currentSpecialWords = [];
+            let isKhmer = false;
+            wordIndex = 0;
+            
+            for (let i = 0; i < lines; i++) {
+                const variation = (Math.random() - 0.5) * 8;
+                currentFontSize = Math.max(10, Math.min(20, currentFontSize + variation));
+                
+                let lineWords = [];
+                const targetWords = Math.floor(Math.random() * 5) + 8;
+                
+                for (let w = 0; w < targetWords; w++) {
+                    let word;
+                    let color = getWordColor();
+                    let formatting = getWordFormatting();
+                    let extraClass = '';
+                    
+                    if (wordCount > 0 && wordCount % 27 === 0 && !inSpecialSequence) {
+                        inSpecialSequence = true;
+                        specialSequenceRemaining = 3;
+                        const scripts = [cyrillicWords, khmerWords];
+                        const scriptIndex = Math.floor(Math.random() * scripts.length);
+                        currentSpecialWords = scripts[scriptIndex];
+                        isKhmer = scriptIndex === 1;
+                    }
+                    
+                    if (inSpecialSequence && specialSequenceRemaining > 0) {
+                        word = currentSpecialWords[Math.floor(Math.random() * currentSpecialWords.length)];
+                        if (isKhmer) extraClass = 'word-khmer';
+                        specialSequenceRemaining--;
+                        if (specialSequenceRemaining === 0) {
+                            inSpecialSequence = false;
+                            isKhmer = false;
+                        }
+                    } else {
+                        if (Math.random() > 0.22) {
+                            word = fragments[Math.floor(Math.random() * fragments.length)];
+                        } else {
+                            word = symbols[Math.floor(Math.random() * symbols.length)];
+                            formatting = { class: '', isLink: false };
+                        }
+                    }
+                    
+                    let classes = [formatting.class, extraClass].filter(c => c).join(' ');
+                    const wrapId = `word-${wordIndex++}`;
+                    
+                    if (formatting.isLink) {
+                        lineWords.push(`<span class="word-wrap" id="${wrapId}"><a class="word-link ${extraClass}" style="color: ${color};" onclick="location.reload(); return false;" href="#">${word}</a></span>`);
+                    } else {
+                        lineWords.push(`<span class="word-wrap" id="${wrapId}"><span class="${classes}" style="color: ${color};">${word}</span></span>`);
+                    }
+                    
+                    wordCount++;
+                }
+                
+                const lineContent = lineWords.join(' ');
+                html += `<span class="text-line" style="font-size: ${currentFontSize}px; line-height: ${currentFontSize * 1.3}px;">${lineContent}</span>`;
+            }
+            return html;
+        }
+
+        const textLayer = document.getElementById('textLayer');
+        let baseHTML = generateCrypticText();
+        textLayer.innerHTML = baseHTML;
+        
+        function collectWordElements() {
+            wordElements = [];
+            const wraps = textLayer.querySelectorAll('.word-wrap');
+            wraps.forEach((wrap, index) => {
+                const rect = wrap.getBoundingClientRect();
+                wordElements.push({
+                    el: wrap,
+                    baseX: rect.left + rect.width / 2,
+                    baseY: rect.top + rect.height / 2,
+                    index: index,
+                    waveOffset: Math.random() * Math.PI * 2
+                });
+            });
+        }
+        collectWordElements();
+        
+        // Text animation: wave + magnification
+        function animateText() {
+            globalTime += 0.016;
+            
+            const magnifyRadius = 200;
+            const maxScale = 1.2;
+            const maxDisplace = 6;
+            const waveAmplitude = 2.5;
+            const waveSpeed = 1.2;
+            
+            wordElements.forEach((word) => {
+                const el = word.el;
+                const rect = el.getBoundingClientRect();
+                const wordX = rect.left + rect.width / 2;
+                const wordY = rect.top + rect.height / 2;
+                
+                const dx = wordX - spotlightX;
+                const dy = wordY - spotlightY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Gentle wave
+                const wavePhase = word.waveOffset + globalTime * waveSpeed + wordX * 0.004;
+                const waveY = Math.sin(wavePhase) * waveAmplitude;
+                const waveX = Math.cos(wavePhase * 0.7) * waveAmplitude * 0.4;
+                
+                // Magnification
+                let scale = 1;
+                let displaceX = 0;
+                let displaceY = 0;
+                
+                if (distance < magnifyRadius) {
+                    const proximity = 1 - (distance / magnifyRadius);
+                    const eased = proximity * proximity * (3 - 2 * proximity);
+                    
+                    scale = 1 + (maxScale - 1) * eased;
+                    
+                    if (distance > 5) {
+                        const pushStrength = eased * maxDisplace;
+                        displaceX = (dx / distance) * pushStrength;
+                        displaceY = (dy / distance) * pushStrength;
+                    }
+                }
+                
+                const totalX = waveX + displaceX;
+                const totalY = waveY + displaceY;
+                
+                el.style.transform = `translate(${totalX}px, ${totalY}px) scale(${scale})`;
+            });
+            
+            requestAnimationFrame(animateText);
+        }
+        animateText();
+        
+        // Glitch system - monospace safe (all chars same width)
+        const glitchTargets = [];
+        const textLines = textLayer.querySelectorAll('.text-line');
+        
+        // Monospace-safe replacement chars (all render same width)
+        const monoAlternateChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789абвгдежзийклмнопрстуфхцчшщъыьэюяАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ';
+        
+        textLines.forEach((line) => {
+            const wordSpans = line.querySelectorAll('span[style*="color"]');
+            wordSpans.forEach((span) => {
+                const text = span.textContent;
+                if (text.match(/[a-z]/i) && Math.random() > 0.88) {
+                    const charIndex = Math.floor(Math.random() * text.length);
+                    if (text[charIndex].match(/[a-z]/i)) {
+                        glitchTargets.push({
+                            span: span,
+                            charIndex: charIndex,
+                            originalText: text,
+                            originalColor: span.style.color
+                        });
+                    }
+                }
+            });
+        });
+        
+        function updateText() {
+            glitchTargets.forEach(target => {
+                if (Math.random() > 0.75) {
+                    const chars = target.originalText.split('');
+                    
+                    if (Math.random() > 0.55) {
+                        const replacement = monoAlternateChars[Math.floor(Math.random() * monoAlternateChars.length)];
+                        chars[target.charIndex] = replacement;
+                        
+                        if (Math.random() > 0.6) {
+                            const glitchHtml = chars.map((c, i) => {
+                                if (i === target.charIndex) {
+                                    return `<span class="glitch">${c}</span>`;
+                                }
+                                return c;
+                            }).join('');
+                            target.span.innerHTML = glitchHtml;
+                        } else {
+                            target.span.textContent = chars.join('');
+                        }
+                    } else {
+                        target.span.textContent = target.originalText;
+                    }
+                }
+            });
+        }
+
+        setInterval(updateText, 100);
+
+        // Vignette layer - clean white spotlight
+        const vignetteCanvas = document.getElementById('vignetteLayer');
+        const vignetteCtx = vignetteCanvas.getContext('2d');
+
+        function resizeVignette() {
+            vignetteCanvas.width = window.innerWidth;
+            vignetteCanvas.height = window.innerHeight;
+        }
+        resizeVignette();
+        window.addEventListener('resize', resizeVignette);
+
+        function drawVignette() {
+            smoothedVelocity += (cursorVelocity - smoothedVelocity) * 0.08;
+            cursorVelocity *= 0.94;
+            
+            if (waveActive) {
+                waveProgress += 0.12;
+                waveIntensity *= 0.97;
+                if (waveProgress > Math.PI * 2.5) {
+                    waveActive = false;
+                    waveIntensity = 0;
+                }
+            }
+            
+            spotlightX += (mouseX - spotlightX) * spotlightDragFactor;
+            spotlightY += (mouseY - spotlightY) * spotlightDragFactor;
+            
+            textLayer.style.setProperty('--mouse-x', spotlightX + 'px');
+            textLayer.style.setProperty('--mouse-y', spotlightY + 'px');
+            
+            vignetteCtx.clearRect(0, 0, vignetteCanvas.width, vignetteCanvas.height);
+            
+            // Dark background
+            vignetteCtx.fillStyle = '#08090d';
+            vignetteCtx.fillRect(0, 0, vignetteCanvas.width, vignetteCanvas.height);
+            
+            // Cut out spotlight hole
+            vignetteCtx.globalCompositeOperation = 'destination-out';
+            vignetteCtx.beginPath();
+            vignetteCtx.ellipse(spotlightX, spotlightY, spotlightRadiusX, spotlightRadiusY, 0, 0, Math.PI * 2);
+            vignetteCtx.fill();
+            vignetteCtx.globalCompositeOperation = 'source-over';
+            
+            // Clean white spotlight fill
+            vignetteCtx.fillStyle = 'rgba(250, 250, 250, 0.96)';
+            vignetteCtx.beginPath();
+            vignetteCtx.ellipse(spotlightX, spotlightY, spotlightRadiusX, spotlightRadiusY, 0, 0, Math.PI * 2);
+            vignetteCtx.fill();
+            
+            requestAnimationFrame(drawVignette);
+        }
+        drawVignette();
+
+        // Edge layer - organic border around spotlight
+        const edgeCanvas = document.getElementById('edgeLayer');
+        const edgeCtx = edgeCanvas.getContext('2d');
+        
+        function resizeEdge() {
+            edgeCanvas.width = window.innerWidth;
+            edgeCanvas.height = window.innerHeight;
+        }
+        resizeEdge();
+        window.addEventListener('resize', resizeEdge);
+
+        class EdgeParticle {
+            constructor(angleOffset) {
+                this.baseAngleOffset = angleOffset;
+                this.angleOffset = angleOffset + (Math.random() - 0.5) * 0.5;
+                this.currentAngleOffset = this.angleOffset;
+                this.baseRadius = 185;
+                this.radiusVariation = Math.random() * 70 + 25;
+                this.baseSize = Math.random() * 40 + 22;
+                this.size = this.baseSize;
+                this.wobble = Math.random() * Math.PI * 2;
+                this.wobbleSpeed = (Math.random() - 0.5) * 0.015;
+                
+                this.attachedCenterX = window.innerWidth / 2;
+                this.attachedCenterY = window.innerHeight / 2;
+                this.attachmentFactor = 0.65 + Math.random() * 0.3;
+                
+                this.breatheSensitivity = 0.4 + Math.random() * 0.5;
+                this.waveSensitivity = 0.4 + Math.random() * 0.5;
+                this.driftSensitivity = 0.25 + Math.random() * 0.35;
+            }
+
+            update(spotX, spotY, velocity, wActive, wProgress, wOrigin, wIntensity, moveAngle) {
+                this.wobble += this.wobbleSpeed;
+                
+                this.attachedCenterX += (spotX - this.attachedCenterX) * this.attachmentFactor;
+                this.attachedCenterY += (spotY - this.attachedCenterY) * this.attachmentFactor;
+                
+                const breatheAmount = velocity * this.breatheSensitivity * 0.5;
+                this.size = this.baseSize + breatheAmount;
+                
+                let waveEffect = 0;
+                if (wActive) {
+                    const waveAngle = wOrigin + wProgress;
+                    let angleDiff = this.baseAngleOffset - waveAngle;
+                    
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    const waveWidth = 1.4;
+                    if (Math.abs(angleDiff) < waveWidth) {
+                        const waveStrength = (1 - Math.abs(angleDiff) / waveWidth);
+                        waveEffect = Math.sin(waveStrength * Math.PI) * wIntensity * this.waveSensitivity * 30;
+                    }
+                }
+                
+                const targetAngleDrift = this.angleOffset + Math.sin(this.baseAngleOffset - moveAngle) * this.driftSensitivity * (velocity / 35);
+                this.currentAngleOffset += (targetAngleDrift - this.currentAngleOffset) * 0.04;
+                this.currentAngleOffset += (this.angleOffset - this.currentAngleOffset) * 0.015;
+                
+                this._waveEffect = waveEffect;
+            }
+
+            draw(ctx) {
+                const wobbleOffset = Math.sin(this.wobble) * 10;
+                const radius = this.baseRadius + this.radiusVariation + wobbleOffset + this._waveEffect;
+                const x = this.attachedCenterX + Math.cos(this.currentAngleOffset) * radius;
+                const y = this.attachedCenterY + Math.sin(this.currentAngleOffset) * radius;
+
+                ctx.fillStyle = '#08090d';
+                ctx.beginPath();
+                ctx.arc(x, y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        const edgeParticles = [];
+        const numEdgeParticles = 480;
+        for (let i = 0; i < numEdgeParticles; i++) {
+            const angle = (i / numEdgeParticles) * Math.PI * 2;
+            edgeParticles.push(new EdgeParticle(angle));
+        }
+
+        function animateEdge() {
+            edgeCtx.clearRect(0, 0, edgeCanvas.width, edgeCanvas.height);
+
+            edgeParticles.forEach(particle => {
+                particle.update(
+                    spotlightX, 
+                    spotlightY, 
+                    smoothedVelocity,
+                    waveActive,
+                    waveProgress,
+                    waveOrigin,
+                    waveIntensity,
+                    movementAngle
+                );
+                particle.draw(edgeCtx);
+            });
+
+            requestAnimationFrame(animateEdge);
+        }
+        animateEdge();
+
+        // Floating particles - masked to NOT appear inside spotlight
+        class Particle {
+            constructor(x, y, size, opacity, layer) {
+                this.x = x;
+                this.y = y;
+                this.baseX = x;
+                this.baseY = y;
+                this.size = size;
+                this.baseSize = size;
+                this.opacity = opacity;
+                this.layer = layer;
+                this.vx = 0;
+                this.vy = 0;
+                
+                this.pulsePhase = Math.random() * Math.PI * 2;
+                this.pulseSpeed = 0.015 + Math.random() * 0.015;
+                this.pulseAmount = 0.12 + Math.random() * 0.08;
+            }
+
+            update(mx, my, repulsionStrength, returnStrength) {
+                const dx = this.x - mx;
+                const dy = this.y - my;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const maxDistance = 160 * this.layer;
+
+                if (distance < maxDistance) {
+                    const force = (1 - distance / maxDistance) * repulsionStrength;
+                    const angle = Math.atan2(dy, dx);
+                    this.vx += Math.cos(angle) * force;
+                    this.vy += Math.sin(angle) * force;
+                }
+
+                this.vx += (this.baseX - this.x) * returnStrength;
+                this.vy += (this.baseY - this.y) * returnStrength;
+                this.vx *= 0.94;
+                this.vy *= 0.94;
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                this.pulsePhase += this.pulseSpeed;
+                this.size = this.baseSize * (1 + Math.sin(this.pulsePhase) * this.pulseAmount);
+            }
+
+            draw(ctx, spotX, spotY, radX, radY) {
+                // Check if particle center is inside spotlight ellipse
+                const dx = this.x - spotX;
+                const dy = this.y - spotY;
+                const normalizedDist = (dx * dx) / (radX * radX) + (dy * dy) / (radY * radY);
+                
+                // Skip drawing if inside spotlight (with small buffer)
+                if (normalizedDist < 1.1) {
+                    return;
+                }
+                
+                ctx.globalAlpha = this.opacity;
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        const layers = [
+            { 
+                canvas: document.getElementById('layer1'), 
+                particleCount: 150,
+                sizeRange: [10, 20],
+                opacity: 0.85,
+                layerDepth: 1,
+                repulsion: 0.7,
+                returnSpeed: 0.018
+            },
+            { 
+                canvas: document.getElementById('layer2'), 
+                particleCount: 110,
+                sizeRange: [20, 35],
+                opacity: 0.6,
+                layerDepth: 1.5,
+                repulsion: 0.45,
+                returnSpeed: 0.012
+            },
+            { 
+                canvas: document.getElementById('layer3'), 
+                particleCount: 80,
+                sizeRange: [35, 55],
+                opacity: 0.4,
+                layerDepth: 2,
+                repulsion: 0.3,
+                returnSpeed: 0.008
+            },
+            { 
+                canvas: document.getElementById('layer4'), 
+                particleCount: 45,
+                sizeRange: [55, 85],
+                opacity: 0.2,
+                layerDepth: 3,
+                repulsion: 0.18,
+                returnSpeed: 0.006
+            }
+        ];
+
+        const particleSystems = layers.map(config => {
+            const canvas = config.canvas;
+            const ctx = canvas.getContext('2d');
+            const particles = [];
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            resize();
+            window.addEventListener('resize', resize);
+
+            for (let i = 0; i < config.particleCount; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const size = config.sizeRange[0] + Math.random() * (config.sizeRange[1] - config.sizeRange[0]);
+                particles.push(new Particle(x, y, size, config.opacity, config.layerDepth));
+            }
+
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                particles.forEach(particle => {
+                    particle.update(mouseX, mouseY, config.repulsion, config.returnSpeed);
+                    particle.draw(ctx, spotlightX, spotlightY, spotlightRadiusX + 20, spotlightRadiusY + 20);
+                });
+
+                requestAnimationFrame(animate);
+            }
+            animate();
+
+            return { canvas, ctx, particles, config };
+        });
+
+        window.addEventListener('resize', () => {
+            baseHTML = generateCrypticText();
+            textLayer.innerHTML = baseHTML;
+            collectWordElements();
+            
+            glitchTargets.length = 0;
+            const newTextLines = textLayer.querySelectorAll('.text-line');
+            
+            newTextLines.forEach((line) => {
+                const wordSpans = line.querySelectorAll('span[style*="color"]');
+                wordSpans.forEach((span) => {
+                    const text = span.textContent;
+                    if (text.match(/[a-z]/i) && Math.random() > 0.88) {
+                        const charIndex = Math.floor(Math.random() * text.length);
+                        if (text[charIndex].match(/[a-z]/i)) {
+                            glitchTargets.push({
+                                span: span,
+                                charIndex: charIndex,
+                                originalText: text,
+                                originalColor: span.style.color
+                            });
+                        }
+                    }
+                });
+            });
+            
+            particleSystems.forEach(system => {
+                const newWidth = window.innerWidth;
+                const newHeight = window.innerHeight;
+                const oldWidth = system.canvas.width;
+                const oldHeight = system.canvas.height;
+
+                system.canvas.width = newWidth;
+                system.canvas.height = newHeight;
+
+                system.particles.forEach(particle => {
+                    particle.baseX = (particle.baseX / oldWidth) * newWidth;
+                    particle.baseY = (particle.baseY / oldHeight) * newHeight;
+                    particle.x = particle.baseX;
+                    particle.y = particle.baseY;
+                });
+            });
+        });
+    </script>
+</body>
+</html>
